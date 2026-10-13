@@ -195,6 +195,21 @@ input,select,textarea{font-family:inherit}
   box-shadow:0 6px 14px rgba(192,138,62,.4);
 }
 .fab:active{transform:scale(.94)}
+.icon-btn{
+  flex:none;width:44px;height:44px;border-radius:12px;
+  border:1.5px solid var(--line-strong);background:#FFFDF6;color:var(--ink-2);
+  display:flex;align-items:center;justify-content:center;
+}
+.icon-btn:active{background:#F0EAD8}
+.sync-note{font-size:12.5px;color:var(--ink-2);line-height:1.7;margin:6px 0 2px}
+.sync-ops{display:flex;gap:10px;margin-top:14px}
+.sync-toggle{
+  display:flex;align-items:center;gap:8px;margin-top:14px;
+  font-size:14px;color:var(--ink);cursor:pointer;
+}
+.sync-toggle input{width:18px;height:18px;accent-color:var(--accent)}
+.sync-status{font-size:12.5px;color:var(--ink-2);margin-top:12px;min-height:18px}
+.sync-hint{font-size:11.5px;color:#A89B7E;line-height:1.7;margin-top:8px}
 .app-footer{
   flex:none;background:#000;color:#F3EAD5;text-align:center;
   padding:11px 14px;font-size:12.5px;letter-spacing:.5px;
@@ -353,6 +368,9 @@ input,select,textarea{font-family:inherit}
         <button type="button" id="modeList" class="seg-btn">名录</button>
       </div>
       <input id="searchInput" class="search" type="search" placeholder="搜索姓名 / 班别 / 爱好…">
+      <button type="button" id="btnSync" class="icon-btn" title="云同步设置">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .86-8.94 6 6 0 0 0-11.43 2.1A4 4 0 0 0 7.2 19H17.5z"/></svg>
+      </button>
       <button type="button" id="btnAdd" class="fab" title="添加同学">+</button>
     </div>
 
@@ -470,6 +488,28 @@ input,select,textarea{font-family:inherit}
     </div>
   </div>
 
+  <!-- ===== 弹层：云同步设置 ===== -->
+  <div id="modalSync" class="modal hidden">
+    <div class="sheet">
+      <h3>云同步设置</h3>
+      <p class="sync-note">数据存放于 Pantry 云存储（免费服务）。同学录含手机号、家庭住址等隐私信息，请仅用于可信的 Pantry。</p>
+      <div class="field">
+        <label>Pantry ID</label>
+        <input id="pantryId" maxlength="64" placeholder="在 getpantry.cloud 创建后粘贴 Pantry ID">
+      </div>
+      <div class="form-actions">
+        <button type="button" id="btnPantrySave" class="btn btn-primary">保存</button>
+        <button type="button" id="btnSyncClose" class="btn btn-ghost">关闭</button>
+      </div>
+      <div class="sync-ops">
+        <button type="button" id="btnSyncUp" class="btn btn-primary">上传到云端</button>
+        <button type="button" id="btnSyncDown" class="btn btn-ghost">从云端下载</button>
+      </div>
+      <p class="sync-status" id="syncStatus">未连接</p>
+      <p class="sync-hint">保存 Pantry ID 后即自动同步：每次增删改自动上传，进入应用自动拉取。免费版数据长期闲置可能被清除，建议定期手动上传或另存备份文件。Pantry ID 仅保存在本机。</p>
+    </div>
+  </div>
+
   <div id="toast"></div>
 </div>
 
@@ -503,11 +543,15 @@ var users = {}, session = null, list = [];
 function load(){
   try{ users = JSON.parse(localStorage.getItem(LS.users)) || {}; }catch(e){ users = {}; }
   try{ session = localStorage.getItem(LS.session); }catch(e){ session = null; }
-  try{ list = JSON.parse(localStorage.getItem(LS.data)) || []; }catch(e){ list = []; }
-  if(!list.length) seed();
+  loadList();
+}
+function dataKey(){ return 'alumni_data_' + (session || ''); }
+function loadList(){
+  try{ list = JSON.parse(localStorage.getItem(dataKey())) || []; }catch(e){ list = []; }
+  if(!list.length && session && users[session]) seed();
 }
 function saveUsers(){ try{ localStorage.setItem(LS.users, JSON.stringify(users)); }catch(e){} }
-function saveData(){ try{ localStorage.setItem(LS.data, JSON.stringify(list)); }catch(e){} }
+function saveData(){ if(!session) return; try{ localStorage.setItem(dataKey(), JSON.stringify(list)); }catch(e){} }
 
 /* ===== 励志诗句池（每页顶部轮换展示） ===== */
 var QUOTES = [
@@ -564,6 +608,7 @@ function filtered(){
 function loginAs(name){
   session = name;
   try{ localStorage.setItem(LS.session, name); }catch(e){}
+  loadList();
   enterApp();
 }
 function doLogin(){
@@ -573,6 +618,7 @@ function doLogin(){
   if(!p){ toast('请输入密码'); return; }
   if(!users[u]){ toast('账号不存在，请先注册'); return; }
   if(users[u].p !== hashStr(p)){ toast('密码不正确，请重试'); return; }
+  registryReport(u);
   loginAs(u);
 }
 function doRegister(){
@@ -585,6 +631,7 @@ function doRegister(){
   if(users[u]){ toast('该账号已注册，请直接登录'); return; }
   users[u] = { p: hashStr(p) };
   saveUsers();
+  registryReport(u);
   toast('注册成功，欢迎「' + u + '」');
   loginAs(u);
 }
@@ -735,6 +782,7 @@ function enterApp(){
   state = { stage:'all', idx:0, mode:'flip', search:'' };
   syncModeUI();
   renderAll();
+  autoMerge();
 }
 function setAuthMode(mode){
   authMode = mode;
@@ -795,6 +843,117 @@ function updateAvatarPreview(){
   }
 }
 
+/* ===== 云端同步（Pantry） ===== */
+var PANTRY_BASE = 'https://getpantry.cloud/apiv1/pantry/';
+var PANTRY_DEFAULT_ID = 'cacdfc2a-c8ac-4bc3-ab24-ad0c1e9c655d';
+function getPantryId(){
+  try{ var v = localStorage.getItem('alumni_pantry_id'); if(v) return v; }catch(e){}
+  return PANTRY_DEFAULT_ID;
+}
+function hasCustomPantryId(){ try{ return !!localStorage.getItem('alumni_pantry_id'); }catch(e){ return false; } }
+function setPantryId(v){ try{ localStorage.setItem('alumni_pantry_id', v); }catch(e){} }
+function getSyncMeta(){ try{ return JSON.parse(localStorage.getItem('alumni_sync_meta_' + (session || ''))) || null; }catch(e){ return null; } }
+function setSyncMeta(t){ try{ localStorage.setItem('alumni_sync_meta_' + (session || ''), JSON.stringify({ at: t })); }catch(e){} }
+function basketName(){ return 'tongxuelu_' + (session ? encodeURIComponent(session) : 'guest'); }
+function basketUrlFor(b){ return PANTRY_BASE + encodeURIComponent(getPantryId()) + '/basket/' + b; }
+function basketUrl(){ return basketUrlFor(basketName()); }
+var REGISTRY_BASKET = 'tongxuelu_registry';
+function registryReport(name){
+  var id = getPantryId();
+  if(!id || !name) return;
+  var url = basketUrlFor(REGISTRY_BASKET);
+  var now = new Date().toISOString();
+  fetch(url, { method: 'GET' })
+  .then(function(r){
+    if(r.status >= 400) return { users: [] };
+    return r.json().catch(function(){ return { users: [] }; });
+  })
+  .then(function(obj){
+    var users = (obj && obj.users) ? obj.users : [];
+    var found = false;
+    users.forEach(function(u){ if(u.name === name){ u.lastSeen = now; found = true; } });
+    if(!found) users.push({ name: name, registeredAt: now, lastSeen: now });
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updatedAt: now, users: users })
+    });
+  })
+  .catch(function(){});
+}
+function syncStatus(text){ $('syncStatus').textContent = text || ''; }
+function syncPush(quiet){
+  var id = getPantryId();
+  if(!id){ if(!quiet) toast('请先填写 Pantry ID'); return; }
+  syncStatus('正在上传…');
+  fetch(basketUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updatedAt: new Date().toISOString(), data: list })
+  })
+  .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(function(){
+    setSyncMeta(Date.now());
+    syncStatus('已上传 · ' + new Date().toLocaleString());
+    if(!quiet) toast('已上传到云端');
+  })
+  .catch(function(e){
+    syncStatus('上传失败：' + e.message);
+    if(!quiet) toast('上传失败，请检查 Pantry ID 与网络');
+  });
+}
+function syncPull(manual){
+  var id = getPantryId();
+  if(!id){ if(manual) toast('请先填写 Pantry ID'); return; }
+  syncStatus('正在下载…');
+  fetch(basketUrl(), { method: 'GET' })
+  .then(function(r){
+    if(r.status >= 400) return null;
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  })
+  .then(function(obj){
+    if(!obj){ syncStatus('云端还没有数据'); if(manual) toast('云端还没有数据'); return; }
+    if(!obj.data){ if(manual) toast('云端暂无数据'); return; }
+    list = obj.data;
+    saveData();
+    setSyncMeta(Date.now());
+    if(state.idx >= filtered().length) state.idx = Math.max(0, filtered().length - 1);
+    renderAll();
+    syncStatus('已下载 · ' + new Date().toLocaleString());
+    if(manual) toast('已从云端下载');
+  })
+  .catch(function(e){
+    syncStatus('下载失败：' + e.message);
+    if(manual) toast('下载失败：' + e.message);
+  });
+}
+function autoMerge(){
+  if(!getPantryId()) return;
+  fetch(basketUrl(), { method: 'GET' })
+  .then(function(r){
+    if(r.status >= 400) return null;
+    return r.json();
+  })
+  .then(function(obj){
+    if(!obj || !obj.data){
+      if(list.length) syncPush(true);
+      return;
+    }
+    var cloudAt = obj.updatedAt ? new Date(obj.updatedAt).getTime() : 0;
+    var localAt = (getSyncMeta() || {}).at || 0;
+    if(cloudAt > localAt){ syncPull(false); }
+    else if(localAt > cloudAt){ syncPush(true); }
+  })
+  .catch(function(){});
+}
+function openSync(){
+  $('pantryId').value = getPantryId();
+  $('syncStatus').textContent = hasCustomPantryId() ? '已连接 · 自动同步已开启' : '已连接（内置默认 ID）· 自动同步已开启';
+  $('modalSync').classList.remove('hidden');
+}
+function closeSync(){ $('modalSync').classList.add('hidden'); }
+
 /* ===== 表单：添加 / 编辑 ===== */
 function openForm(id){
   editId = id;
@@ -849,6 +1008,7 @@ function saveForm(){
   saveData();
   closeForm();
   renderAll();
+  if(getPantryId()) syncPush(true);
 }
 function deleteForm(){
   if(editId == null) return;
@@ -861,6 +1021,7 @@ function deleteForm(){
   if(state.idx >= filtered().length) state.idx = Math.max(0, filtered().length - 1);
   renderAll();
   toast('已删除');
+  if(getPantryId()) syncPush(true);
 }
 
 /* ===== 轻提示 ===== */
@@ -911,6 +1072,21 @@ function bind(){
     state.idx = 0;
     renderList();
   });
+
+  /* 云同步 */
+  $('btnSync').addEventListener('click', openSync);
+  $('btnSyncClose').addEventListener('click', closeSync);
+  $('modalSync').addEventListener('click', function(e){ if(e.target === this) closeSync(); });
+  $('btnPantrySave').addEventListener('click', function(){
+    var v = $('pantryId').value.trim();
+    if(!v){ toast('请粘贴 Pantry ID'); return; }
+    setPantryId(v);
+    $('syncStatus').textContent = '已连接 · 自动同步已开启';
+    toast('Pantry ID 已保存，自动同步已开启');
+    syncPush(true);
+  });
+  $('btnSyncUp').addEventListener('click', function(){ syncPush(false); });
+  $('btnSyncDown').addEventListener('click', function(){ syncPull(true); });
 
   /* 翻页 */
   $('btnPrev').addEventListener('click', function(){ flip(-1); });
